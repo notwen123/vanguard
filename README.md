@@ -39,15 +39,26 @@ Vanguard sits between your local or sovereign AI (like OpenClaw) and the digital
 - Auth0 Tenant with Token Vault enabled
 
 ### 2. Launching Vanguard
+
+#### Option A: Docker (Recommended)
 ```bash
-# Clone the repository
-git clone https://github.com/notwen123/vanguard && cd vanguard
-
-# Configure environment
-cp .env.example .env
-
 # Start the Gateway and Dashboard
-docker-compose up --build
+docker compose up --build
+```
+
+#### Option B: Manual (No Docker)
+If you don't have Docker installed, use our automated launch script:
+```bash
+# 1. Setup Backend and Frontend
+./run_local.sh
+
+# 2. Run Backend (Terminal 1)
+cd backend && source venv/bin/activate
+uvicorn app.main:app --reload
+
+# 3. Run Frontend (Terminal 2)
+cd frontend
+npm run dev
 ```
 
 ### 3. The "Winning" Demo Flow
