@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 from typing import Any
@@ -6,10 +8,12 @@ import uuid
 
 from app.database import get_db
 from app.auth import verify_token
+
+limiter = Limiter(key_func=get_remote_address)
 from app.supervisor import classify_intent
 from app.token_vault import get_scoped_token
 from app.executor import execute_action
-from app.stepup import trigger_stepup
+from app.stepup import trigger_stepup, verify_stepup
 from app.models import AuditLog, Policy
 from sqlalchemy import select
 from datetime import datetime, timezone
@@ -38,7 +42,9 @@ class AgentResponse(BaseModel):
 
 
 @router.post("/request", response_model=AgentResponse)
+@limiter.limit("30/minute")
 async def handle_agent_request(
+    request: Request,
     req: AgentRequest,
     db: AsyncSession = Depends(get_db),
     token_payload: dict = Depends(verify_token),
@@ -75,7 +81,8 @@ async def handle_agent_request(
         else:
             challenge = await trigger_stepup(
                 user_sub=user_sub,
-                context={"request_id": request_id, "mfa_token": req.mfa_token or ""},
+                context={"request_id": request_id},
+                db=db,
             )
             # Log and return — execution pending human approval
             audit = await _log_decision(
@@ -97,7 +104,7 @@ async def handle_agent_request(
 
     if decision == "APPROVED":
         try:
-            token_info = await get_scoped_token(user_sub, req.service, req.action)
+            token_info = await get_scoped_token(user_sub, req.service, req.action, db=db)
             token_issued = True
             result = await execute_action(
                 service=req.service,

@@ -1,59 +1,62 @@
 """
-Step-up authentication via Auth0 MFA.
-Triggers a push notification / MFA challenge for high-risk actions.
+Step-up authentication — FREE implementation using TOTP (RFC 6238).
+Compatible with Google Authenticator, Authy, any TOTP app.
+No paid Auth0 plan required.
 """
-import httpx
-from app.config import settings
-from app.auth import get_management_token
+import pyotp
+import json
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, String, Text, DateTime
+from sqlalchemy.orm import Mapped, mapped_column
+from datetime import datetime, timezone
+from app.database import Base
 
-async def trigger_stepup(user_sub: str, context: dict) -> dict:
+
+class TotpSecret(Base):
+    __tablename__ = "totp_secrets"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_sub: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    secret: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+async def get_or_create_totp(db: AsyncSession, user_sub: str) -> str:
+    """Get existing TOTP secret or create one for this user."""
+    result = await db.execute(select(TotpSecret).where(TotpSecret.user_sub == user_sub))
+    row = result.scalar_one_or_none()
+    if row:
+        return row.secret
+    secret = pyotp.random_base32()
+    db.add(TotpSecret(user_sub=user_sub, secret=secret))
+    await db.commit()
+    return secret
+
+
+async def trigger_stepup(user_sub: str, context: dict, db: AsyncSession = None) -> dict:
     """
-    Enroll user in a step-up MFA challenge via Auth0.
-    Returns a challenge_id that the frontend polls to check approval.
+    Returns a TOTP provisioning URI so the user can scan it with
+    Google Authenticator / Authy. On subsequent calls returns the issuer info.
     """
-    mgmt_token = await get_management_token()
-
-    async with httpx.AsyncClient() as client:
-        # Trigger MFA challenge for the user
-        resp = await client.post(
-            f"https://{settings.AUTH0_DOMAIN}/mfa/challenge",
-            headers={"Authorization": f"Bearer {mgmt_token}"},
-            json={
-                "client_id": settings.AUTH0_CLIENT_ID,
-                "client_secret": settings.AUTH0_CLIENT_SECRET,
-                "challenge_type": "otp oob",
-                "mfa_token": context.get("mfa_token", ""),
-            },
-        )
-
-        if resp.status_code == 200:
-            data = resp.json()
-            return {
-                "challenge_id": data.get("oob_code", data.get("challenge_id")),
-                "challenge_type": data.get("challenge_type", "oob"),
-                "binding_method": data.get("binding_method"),
-            }
-        else:
-            # Fallback: return a pending challenge that requires dashboard approval
-            return {
-                "challenge_id": f"pending_{user_sub}_{context.get('request_id', 'unknown')}",
-                "challenge_type": "dashboard_approval",
-                "binding_method": "prompt",
-            }
+    secret = await get_or_create_totp(db, user_sub)
+    totp = pyotp.TOTP(secret)
+    uri = totp.provisioning_uri(name=user_sub, issuer_name="Vanguard Gateway")
+    return {
+        "challenge_type": "totp",
+        "provisioning_uri": uri,   # scan this QR code once
+        "issuer": "Vanguard Gateway",
+        "request_id": context.get("request_id"),
+        "instructions": "Enter the 6-digit code from your authenticator app",
+    }
 
 
-async def verify_stepup(challenge_id: str, otp_code: str, mfa_token: str) -> bool:
-    """Verify the step-up OTP/OOB response."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"https://{settings.AUTH0_DOMAIN}/oauth/token",
-            json={
-                "grant_type": "http://auth0.com/oauth/grant-type/mfa-oob",
-                "client_id": settings.AUTH0_CLIENT_ID,
-                "client_secret": settings.AUTH0_CLIENT_SECRET,
-                "mfa_token": mfa_token,
-                "oob_code": challenge_id,
-                "binding_code": otp_code,
-            },
-        )
-        return resp.status_code == 200
+async def verify_stepup(user_sub: str, otp_code: str, db: AsyncSession) -> bool:
+    """Verify a TOTP code. Returns True if valid."""
+    result = await db.execute(select(TotpSecret).where(TotpSecret.user_sub == user_sub))
+    row = result.scalar_one_or_none()
+    if not row:
+        return False
+    totp = pyotp.TOTP(row.secret)
+    return totp.verify(otp_code, valid_window=1)  # ±30s tolerance
