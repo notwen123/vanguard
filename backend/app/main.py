@@ -40,6 +40,15 @@ app.include_router(secrets.router)
 app.include_router(connect.router)
 app.include_router(auth_router)
 
+@app.get("/")
+async def root():
+    return {
+        "service": "Vanguard Secure Execution Gateway",
+        "version": "1.0.0",
+        "status": "online",
+        "documentation": "/docs"
+    }
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "vanguard-gateway"}
