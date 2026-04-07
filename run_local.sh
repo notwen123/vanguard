@@ -18,9 +18,9 @@ cd ../frontend
 npm install
 echo "✅ Frontend Ready"
 
-# 3. Pull Ollama Model
-echo "🧠 Ensuring Llama 3.2 is available in Ollama..."
-ollama pull llama3.2 || echo "⚠️ Could not pull llama3.2 automatically. Ensure Ollama is running."
+# 3. Pull Ollama Model (Optional)
+echo "🧠 Checking Ollama for default models..."
+# We use 'mistral' or whatever is in app/config.py. No forced pull to save time.
 
 echo "--------------------------------------------------"
 echo "✅ SETUP COMPLETE"

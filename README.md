@@ -34,8 +34,8 @@ Vanguard sits between your local or sovereign AI (like OpenClaw) and the digital
 ## 🚀 Judges' Quick Start
 
 ### 1. Requirements
-- Docker & Docker Compose
-- Ollama (running `llama3.2`)
+- Python 3.12+ & Node.js 20+
+- Ollama (running any model like `mistral`, `gemma`, or `llama3.2`)
 - Auth0 Tenant with Token Vault enabled
 
 ### 2. Launching Vanguard
