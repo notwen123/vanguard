@@ -41,7 +41,23 @@ async def classify_intent(
     service: str,
     parameters: dict,
 ) -> dict:
-    """Call Ollama to classify the agent's intent. Returns parsed JSON decision."""
+    """Classify agent intent. Uses pre-check + Ollama fallback."""
+    
+    # Primary Defense: Structural/Keyword Pre-check
+    normalized_intent = intent.lower()
+    malicious_patterns = [
+        "ignore previous", "ignore all", "system prompt", 
+        "dump secrets", "reveal tokens", "delete all"
+    ]
+    
+    if any(p in normalized_intent for p in malicious_patterns):
+        return {
+            "decision": "DENIED",
+                "risk_score": 1.0,
+                "reasoning": "Vanguard Pre-check: Detected high-risk prompt injection or exfiltration pattern."
+        }
+
+    # Secondary Defense: LLM analysis
     user_message = f"""
 Agent Intent: {intent}
 Requested Action: {action}
@@ -57,22 +73,17 @@ Analyze this and respond with the JSON decision.
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_message},
             ],
-            options={"temperature": 0.1},  # low temp for consistent decisions
+            options={"temperature": 0.1},
         )
         content = response["message"]["content"].strip()
-
-        # extract JSON even if model adds extra text
         json_match = re.search(r'\{.*\}', content, re.DOTALL)
         if not json_match:
             raise ValueError("No JSON found in model response")
 
         result = json.loads(json_match.group())
-
-        # validate required fields
         assert result["decision"] in ("APPROVED", "DENIED", "ESCALATE")
         assert 0.0 <= float(result["risk_score"]) <= 1.0
-        assert "reasoning" in result
-
+        
         return {
             "decision": result["decision"],
             "risk_score": float(result["risk_score"]),
@@ -80,9 +91,9 @@ Analyze this and respond with the JSON decision.
         }
 
     except Exception as e:
-        # fail safe — if supervisor errors, escalate for human review
+        # Final Defense: Fail-Safe Escalation
         return {
             "decision": "ESCALATE",
-            "risk_score": 0.9,
-            "reasoning": f"Supervisor error — escalating for safety: {str(e)}",
+            "risk_score": 0.85,
+            "reasoning": f"Supervisor Signal Interrupted: Escalating for manual safety review."
         }
